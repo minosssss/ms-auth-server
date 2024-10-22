@@ -1,3 +1,33 @@
+gitlab:
+  base-url: http://192.168.19.254:10000
+  client-id: 8cf582a0a03adfc63f17d333b6e11538450fea08fa2c5e13c842614e45929e8f
+  client-secret: gloas-d35800a58eba7ac2cd6908939cb6ccc7b88aa69b4111aa4fb415dbafb32294bd
+
+spring:
+  h2:
+    console:
+      enabled: true  # H2 Console을 사용할지 여부 (H2 Console은 H2 Database를 UI로 제공해주는 기능)
+  datasource:
+    url: jdbc:h2:mem:authdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${gitlab.base-url}  # GitLab OIDC의 issuer URI
+          jwk-set-uri: ${gitlab.base-url}/oauth/discovery/keys  # GitLab의 공개 키 (JWK Set)
+        opaque-token:
+          introspection-uri: ${gitlab.base-url}/oauth/introspect
+          client-id: ${gitlab.client-id}
+          client-secret: ${gitlab.client-secret}
+
+
 
 server:
   port: 8082
@@ -5,3 +35,10 @@ logging:
   level:
     org.springframework.security: DEBUG
     org.springframework.security.oauth2: DEBUG
+
+
+jwt:
+  secret: VlwEyVBsYt9V7zq57TejMnVUyzblYcfPQye08f7MGVA9XkHa
+  expiration:
+    expirationMs: 7200000                    # JWT 만료 시간을 으로 설정
+    refreshExpirationDays: 7
