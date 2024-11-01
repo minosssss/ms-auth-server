@@ -1,5 +1,6 @@
 package com.broadcns.msauthserver.jwt;
 
+import com.broadcns.msauthserver.dto.JwtProperties;
 import com.broadcns.msauthserver.dto.response.ErrorResponse;
 import com.broadcns.msauthserver.exception.InvalidTokenException;
 import com.broadcns.msauthserver.utils.CookieUtil;
@@ -11,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.tomcat.websocket.AuthenticationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -31,12 +33,8 @@ import static com.broadcns.msauthserver.dto.response.ErrorResponse.*;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final JwtProperties jwtProperties;
 
-    @Value("${jwt.access-token-validity}")
-    private long accessTokenValidity;
-
-    @Value("${jwt.refresh-token-validity}")
-    private long refreshTokenValidity;
 
     @Override
     public void doFilterInternal(HttpServletRequest request,
@@ -46,6 +44,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
             String accessToken = CookieUtil.getCookie(request, "access_token").orElse(null);
+            String refreshToken = CookieUtil.getCookie(request, "refresh_token").orElse(null);
 
             if (accessToken != null) {
                 if (jwtTokenProvider.validateToken(accessToken, false)) {
@@ -54,16 +53,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     if (jwtTokenProvider.isTokenExpiringSoon(accessToken)) {
                         String newAccessToken = jwtTokenProvider.createAccessToken(authentication);
-                        CookieUtil.addCookie(response, "access_token", newAccessToken, accessTokenValidity);
+                        CookieUtil.addCookie(response, "access_token", newAccessToken, jwtProperties.getAccessTokenValidity());
                     }
+
                 }
             }
+
         } catch (InvalidTokenException e) {
             handleExpiredToken(request, response);
         } catch (Exception e) {
             log.error("JWT Authentication failed: {}", e.getMessage());
         }
-
         filterChain.doFilter(request, response);
     }
 
@@ -78,14 +78,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String newAccessToken = jwtTokenProvider.createAccessToken(authentication);
 
                 CookieUtil.addCookie(response, "access_token", newAccessToken,
-                        accessTokenValidity);
+                        jwtProperties.getAccessTokenValidity());
                 CookieUtil.addCookie(response, "refresh_token", newAccessToken,
-                        accessTokenValidity);
+                        jwtProperties.getRefreshTokenValidity());
 
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }
         } catch (Exception e) {
             log.error("Token refresh failed: {}", e.getMessage());
+
         }
     }
 

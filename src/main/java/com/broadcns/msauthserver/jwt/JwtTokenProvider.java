@@ -1,12 +1,15 @@
 package com.broadcns.msauthserver.jwt;
 
+import com.broadcns.msauthserver.dto.JwtProperties;
 import com.broadcns.msauthserver.entity.User;
+import com.broadcns.msauthserver.exception.AuthenticationException;
 import com.broadcns.msauthserver.exception.InvalidTokenException;
 import com.broadcns.msauthserver.service.UserInfoDetailService;
 import com.sun.security.auth.UserPrincipal;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.validation.Payload;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -37,12 +40,7 @@ public class JwtTokenProvider {
     private String SECRET_KEY;
 
 
-    @Value("${jwt.access-token-validity}")
-    private long accessTokenValidity;
-
-    @Value("${jwt.refresh-token-validity}")
-    private long refreshTokenValidity;
-
+    private final JwtProperties jwtProperties;
     private final UserInfoDetailService userDetailsService;
 
     private SecretKey getSigningKey() {
@@ -56,11 +54,11 @@ public class JwtTokenProvider {
 
 
     public String createAccessToken(Authentication authentication) {
-        return createToken(authentication, accessTokenValidity);
+        return createToken(authentication, jwtProperties.getAccessTokenValidity());
     }
 
     public String createRefreshToken(Authentication authentication) {
-        return createToken(authentication, refreshTokenValidity);
+        return createToken(authentication, jwtProperties.getRefreshTokenValidity());
     }
 
     private String createToken(Authentication authentication, long accessExpiredTime) {
@@ -78,7 +76,7 @@ public class JwtTokenProvider {
                 .claim("roles", authorities.stream()
                         .map(GrantedAuthority::getAuthority)
                         .collect(Collectors.toList()))
-                .signWith(getSigningKey())
+                .signWith(getSigningKey(), Jwts.SIG.HS256)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(validity))
                 .compact();
@@ -110,7 +108,7 @@ public class JwtTokenProvider {
             log.error("Invalid JWT signature");
         } catch (ExpiredJwtException e) {
             log.error("Expired JWT token");
-            throw new InvalidTokenException("Token has expired");
+            throw new AuthenticationException("Token has expired");
         } catch (UnsupportedJwtException e) {
             log.error("Unsupported JWT token");
         } catch (IllegalArgumentException e) {
@@ -120,16 +118,17 @@ public class JwtTokenProvider {
     }
 
     public Claims parseClaims(String token) {
-        try {
-            return Jwts
-                    .parser()
-                    .verifyWith(getKey())
-                    .build()
-                    .parseSignedClaims(token)
-                    .getPayload();
-        } catch (ExpiredJwtException e) {
-            return e.getClaims();
+        Claims payload = Jwts
+                .parser()
+                .verifyWith(getKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+
+        if (payload.getExpiration().before(new Date())) {
+            throw new InvalidTokenException("Token has expired");
         }
+        return payload;
     }
 
     public boolean isTokenExpired(String token) {

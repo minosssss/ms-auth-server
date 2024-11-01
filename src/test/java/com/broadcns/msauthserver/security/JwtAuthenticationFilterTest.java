@@ -1,5 +1,6 @@
 package com.broadcns.msauthserver.security;
 
+import com.broadcns.msauthserver.dto.JwtProperties;
 import com.broadcns.msauthserver.exception.InvalidTokenException;
 import com.broadcns.msauthserver.jwt.JwtAuthenticationFilter;
 import com.broadcns.msauthserver.jwt.JwtTokenProvider;
@@ -36,10 +37,12 @@ class JwtAuthenticationFilterTest {
     private FilterChain filterChain;
 
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    private JwtProperties jwtProperties;
+
 
     @BeforeEach
     void setUp() {
-        jwtAuthenticationFilter = new JwtAuthenticationFilter(jwtTokenProvider);
+        jwtAuthenticationFilter = new JwtAuthenticationFilter(jwtTokenProvider, jwtProperties);
     }
 
     @Test

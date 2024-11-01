@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/api")
 @RequiredArgsConstructor
 public class AuthController {
 
@@ -25,7 +25,7 @@ public class AuthController {
         return ResponseEntity.ok(new UserResponse(authService.getCurrentUser()));
     }
 
-    @PostMapping("/refresh")
+    @PostMapping("/auth/refresh")
     public ResponseEntity<Void> refreshToken(HttpServletRequest request, HttpServletResponse response) {
         String refreshToken = CookieUtil.getCookie(request, "refresh_token")
                 .orElseThrow(() -> new InvalidTokenException("Refresh token not found"));
@@ -33,7 +33,7 @@ public class AuthController {
         return ResponseEntity.ok().build();
     }
 
-    @PostMapping("/logout")
+    @PostMapping("/auth/logout")
     public ResponseEntity<Void> logout(
             HttpServletRequest request,
             HttpServletResponse response) {

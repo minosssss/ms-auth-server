@@ -57,43 +57,31 @@ public class GlobalExceptionHandler {
                 .build();
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse);
     }
-//
-//    @ExceptionHandler(GitlabAuthenticationException.class)
-//    public ResponseEntity<ErrorResponse> handleGitlabAuthenticationException(
-//            GitlabAuthenticationException ex, HttpServletRequest request) {
-//        log.error("GitLab authentication failed: {}", ex.getMessage());
-//        ErrorResponse response = new ErrorResponse(
-//                HttpStatus.UNAUTHORIZED.value(),
-//                ex.getMessage(),
-//                request.getRequestURI()
-//        );
-//        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
-//    }
-//
-//    @ExceptionHandler(InvalidTokenException.class)
-//    public ResponseEntity<ErrorResponse> handleInvalidTokenException(
-//            InvalidTokenException ex, HttpServletRequest request) {
-//        log.error("Invalid token: {}", ex.getMessage());
-//        ErrorResponse response = new ErrorResponse(
-//                HttpStatus.UNAUTHORIZED.value(),
-//                ex.getMessage(),
-//                request.getRequestURI()
-//        );
-//        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
-//    }
-//
-//    @ExceptionHandler(AccessDeniedException.class)
-//    public ResponseEntity<ErrorResponse> handleAccessDeniedException(
-//            AccessDeniedException ex, HttpServletRequest request) {
-//        log.error("Access denied: {}", ex.getMessage());
-//        ErrorResponse response = new ErrorResponse(
-//                HttpStatus.FORBIDDEN.value(),
-//                "접근 권한이 없습니다.",
-//                request.getRequestURI()
-//        );
-//        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
-//    }
-//
+
+    @ExceptionHandler(GitlabAuthenticationException.class)
+    public ResponseEntity<ErrorResponse> handleGitlabAuthenticationException(
+            GitlabAuthenticationException ex, HttpServletRequest request) {
+        log.error("GitLab authentication failed: {}", ex.getMessage());
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .status(HttpStatus.UNAUTHORIZED.value())
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build();
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidTokenException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidTokenException(
+            InvalidTokenException ex, HttpServletRequest request) {
+        log.error("Invalid token: {}", ex.getMessage());
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .status(HttpStatus.UNAUTHORIZED.value())
+                .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build();
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAllUncaughtException(Exception ex) {
         log.error("Unexpected error occurred", ex);
