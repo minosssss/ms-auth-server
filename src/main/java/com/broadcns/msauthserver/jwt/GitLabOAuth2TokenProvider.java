@@ -19,6 +19,8 @@ public class GitLabOAuth2TokenProvider {
     @Value("${gitlab.client-secret}")
     private String GITLAB_CLIENT_SECRET;
 
+
+
     private final RestTemplate restTemplate;
 
     public GitLabOAuth2TokenProvider() {

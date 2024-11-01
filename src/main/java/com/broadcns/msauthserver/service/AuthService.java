@@ -1,77 +1,82 @@
 package com.broadcns.msauthserver.service;
 
+import com.broadcns.msauthserver.entity.GitlabUserInfo;
+import com.broadcns.msauthserver.entity.Role;
 import com.broadcns.msauthserver.entity.SignupRequest;
 import com.broadcns.msauthserver.entity.User;
+import com.broadcns.msauthserver.exception.InvalidTokenException;
 import com.broadcns.msauthserver.jwt.GitLabOAuth2TokenProvider;
 import com.broadcns.msauthserver.jwt.JwtTokenProvider;
 import com.broadcns.msauthserver.jwt.TokenResponse;
 import com.broadcns.msauthserver.repository.UserRepository;
+import com.broadcns.msauthserver.utils.CookieUtil;
+import com.broadcns.msauthserver.utils.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.attribute.UserPrincipal;
+import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class AuthService {
-
-
-    private final JwtTokenProvider jwtTokenProvider;
-    private final GitLabOAuth2TokenProvider gitLabOAuth2TokenProvider;
-    private final RefreshTokenService refreshTokenService;
     private final UserRepository userRepository;
-    private final AuthenticationManager authenticationManager;
-    private final PasswordEncoder passwordEncoder;
+    private final JwtTokenProvider jwtTokenProvider;
 
-    public Authentication authenticate(String email, String password) {
-        // Spring Security를 통한 인증
-        return authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(email, password));
+    @Value("${jwt.access-token-validity}")
+    private long accessTokenValidity;
+
+    @Value("${jwt.refresh-token-validity}")
+    private long refreshTokenValidity;
+
+    public User getCurrentUser() {
+        String email = SecurityUtil.getCurrentUserEmail();
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
     }
 
-    public TokenResponse generateToken(Authentication authentication) {
-        String accessToken = jwtTokenProvider.createAccessToken(authentication);
-        String refreshToken = jwtTokenProvider.createRefreshToken(authentication);
-        User principal = (User) authentication.getPrincipal();
-        refreshTokenService.storeRefreshToken(principal.getEmail(), refreshToken);
-
-        return new TokenResponse(accessToken, refreshToken);
-    }
-
-    public TokenResponse refreshAccessToken(String refreshToken) {
-        if (!jwtTokenProvider.validateToken(refreshToken)) {
-            throw new RuntimeException("Invalid Refresh Token");
+    public void refreshToken(String refreshToken, HttpServletResponse response) {
+        if (!jwtTokenProvider.validateToken(refreshToken, true)) {
+            throw new InvalidTokenException("Invalid refresh token");
         }
 
-        Map<String, String> userData = jwtTokenProvider.getUserFromToken(refreshToken);
-        Authentication authentication = new UsernamePasswordAuthenticationToken(userData.get("email"), null, null);
+        Authentication authentication = jwtTokenProvider.getAuthentication(refreshToken);
         String newAccessToken = jwtTokenProvider.createAccessToken(authentication);
+        String newRefreshToken = jwtTokenProvider.createRefreshToken(authentication);
 
-        return new TokenResponse(newAccessToken, refreshToken);
+        // 새로운 토큰을 쿠키에 설정
+        CookieUtil.addCookie(response, "access_token", newAccessToken, accessTokenValidity);
+        CookieUtil.addCookie(response, "refresh_token", newRefreshToken, refreshTokenValidity);
+
+        // 사용자의 refreshToken 업데이트
+        User user = getCurrentUser();
+        user.setRefreshToken(newRefreshToken);
+        userRepository.save(user);
     }
 
-    public void registerUser(SignupRequest signupRequest) {
-        // 이메일 중복 확인
-        if (userRepository.existsByEmail(signupRequest.getEmail())) {
-            throw new RuntimeException("이미 존재하는 이메일입니다.");
-        }
-
-        // 비밀번호 암호화
-        String encodedPassword = passwordEncoder.encode(signupRequest.getPassword());
-
-        // 새로운 사용자 생성
-        User user = new User();
-        user.setEmail(signupRequest.getEmail());
-        user.setPassword(encodedPassword); // 암호화된 비밀번호 설정
-        user.setUserName(signupRequest.getUserName());
-        user.setEnabled(true); // 계정 활성화
-
-        // 사용자 저장
+    public void logout(HttpServletRequest request, HttpServletResponse response) {
+        // 현재 사용자의 refreshToken 제거
+        User user = getCurrentUser();
+        user.setRefreshToken(null);
         userRepository.save(user);
+
+        // 쿠키 삭제
+        CookieUtil.deleteCookie(request,response,"access_token");
+        CookieUtil.deleteCookie(request,response,"refresh_token");
     }
 }

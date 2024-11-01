@@ -1,22 +1,34 @@
 package com.broadcns.msauthserver.jwt;
 
 import com.broadcns.msauthserver.entity.User;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
+import com.broadcns.msauthserver.exception.InvalidTokenException;
+import com.broadcns.msauthserver.service.UserInfoDetailService;
+import com.sun.security.auth.UserPrincipal;
+import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
+import java.security.Key;
+import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.Date;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
+
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class JwtTokenProvider {
@@ -24,83 +36,120 @@ public class JwtTokenProvider {
     @Value("${jwt.secret}")
     private String SECRET_KEY;
 
-    @Value("${jwt.expiration.expirationMs}")
-    private long ACCESS_TOKEN_EXPIRATION_MILLIS;
 
-    @Value("${jwt.expiration.refreshExpirationDays}")
-    private long REFRESH_TOKEN_EXPIRATION_DAY;
+    @Value("${jwt.access-token-validity}")
+    private long accessTokenValidity;
+
+    @Value("${jwt.refresh-token-validity}")
+    private long refreshTokenValidity;
+
+    private final UserInfoDetailService userDetailsService;
 
     private SecretKey getSigningKey() {
         byte[] keyBytes = Decoders.BASE64.decode(this.SECRET_KEY);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
+    private SecretKey getKey() {
+        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(this.SECRET_KEY));
+    }
+
 
     public String createAccessToken(Authentication authentication) {
-        User user = (User) authentication.getPrincipal();
-        ZonedDateTime now = ZonedDateTime.now();
-        return Jwts.builder()
-                .subject(user.getEmail())
-                .issuedAt(Date.from(now.toInstant()))
-                .expiration(Date.from(now.plus(ACCESS_TOKEN_EXPIRATION_MILLIS, ChronoUnit.MILLIS).toInstant()))
-                .signWith(getSigningKey())
-                .compact();
+        return createToken(authentication, accessTokenValidity);
     }
 
     public String createRefreshToken(Authentication authentication) {
-        User user = (User) authentication.getPrincipal();
-        ZonedDateTime now = ZonedDateTime.now();
-        Claims claims = Jwts
-                .claims()
-                .add("data", user)
-                .build();
+        return createToken(authentication, refreshTokenValidity);
+    }
 
-        String refreshToken = Jwts.builder()
-                .claims(claims)
-                .issuedAt(Date.from(now.toInstant()))
-                .expiration(Date.from(now.plusDays(REFRESH_TOKEN_EXPIRATION_DAY).toInstant()))
-                .signWith(getKey())
+    private String createToken(Authentication authentication, long accessExpiredTime) {
+        String username;
+        if (authentication.getPrincipal() instanceof UserDetails) {
+            username = ((UserDetails) authentication.getPrincipal()).getUsername();
+        } else {
+            username = authentication.getName();
+        }
+        Collection<? extends GrantedAuthority> authorities = authentication.getAuthorities();
+        Instant now = Instant.now();
+        Instant validity = now.plus(accessExpiredTime, ChronoUnit.SECONDS);
+        return Jwts.builder()
+                .subject(username)
+                .claim("roles", authorities.stream()
+                        .map(GrantedAuthority::getAuthority)
+                        .collect(Collectors.toList()))
+                .signWith(getSigningKey())
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(validity))
                 .compact();
-
-        // DB 저장
-
-        return refreshToken;
     }
 
-    private SecretKey getKey() {
-        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(SECRET_KEY));
+    private List<String> getAuthorities(UserDetails userDetails) {
+        return userDetails.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .collect(Collectors.toList());
     }
 
-    private Claims getClaim(String token) {
-        return Jwts
-                .parser()
-                .verifyWith(getKey())
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
+    public Authentication getAuthentication(String token) {
+        Claims claims = parseClaims(token);
+
+        Collection<? extends GrantedAuthority> authorities =
+                Arrays.stream(claims.get("roles").toString().split(","))
+                        .map(SimpleGrantedAuthority::new)
+                        .collect(Collectors.toList());
+
+
+        return new UsernamePasswordAuthenticationToken(claims.getSubject(), token, authorities);
     }
 
-    public boolean validateToken(String token) {
+    public boolean validateToken(String token, boolean isRefreshToken) {
         try {
-            getClaim(token);
+            parseClaims(token);
             return true;
-//        } catch (ExpiredJwtException e) {
-//            throw new ExpiredAccessTokenException();
-        } catch (JwtException e) {
-            return false;
+        } catch (SecurityException | MalformedJwtException e) {
+            log.error("Invalid JWT signature");
+        } catch (ExpiredJwtException e) {
+            log.error("Expired JWT token");
+            throw new InvalidTokenException("Token has expired");
+        } catch (UnsupportedJwtException e) {
+            log.error("Unsupported JWT token");
+        } catch (IllegalArgumentException e) {
+            log.error("JWT claims string is empty");
+        }
+        return false;
+    }
+
+    public Claims parseClaims(String token) {
+        try {
+            return Jwts
+                    .parser()
+                    .verifyWith(getKey())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+        } catch (ExpiredJwtException e) {
+            return e.getClaims();
         }
     }
 
-    public Map<String, String> getUserFromToken(String token) {
-        Claims claim = getClaim(token);
-        Map<String, String> data = (Map<String, String>) claim.get("data");
-        return data;
+    public boolean isTokenExpired(String token) {
+        try {
+            Claims claims = parseClaims(token);
+            return claims.getExpiration().before(new Date());
+        } catch (ExpiredJwtException e) {
+            return true;
+        }
     }
 
-    public String getUserEmailFromToken(String token) {
-        Claims claim = getClaim(token);
-        // claim.getSubject()를 통해 JWT에서 subject 값을 가져옴
-        return claim.getSubject();
+    public boolean isTokenExpiringSoon(String token) {
+        try {
+            Claims claims = parseClaims(token);
+            Date expiration = claims.getExpiration();
+            // 만료 10분 전
+            return expiration.getTime() - System.currentTimeMillis() < 600000;
+        } catch (ExpiredJwtException e) {
+            return true;
+        }
     }
 
 }

@@ -1,21 +1,29 @@
 package com.broadcns.msauthserver.jwt;
 
+import com.broadcns.msauthserver.dto.response.ErrorResponse;
+import com.broadcns.msauthserver.exception.InvalidTokenException;
+import com.broadcns.msauthserver.utils.CookieUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Map;
+import java.util.Optional;
+
+import static com.broadcns.msauthserver.dto.response.ErrorResponse.*;
 
 @Slf4j
 @Component
@@ -23,38 +31,62 @@ import java.util.Map;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
-    private final UserDetailsService userDetailsService;
+
+    @Value("${jwt.access-token-validity}")
+    private long accessTokenValidity;
+
+    @Value("${jwt.refresh-token-validity}")
+    private long refreshTokenValidity;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+    public void doFilterInternal(HttpServletRequest request,
+                                 HttpServletResponse response,
+                                 FilterChain filterChain)
             throws ServletException, IOException {
 
-        String accessToken = parseJwt(request);
         try {
-            if (accessToken != null && jwtTokenProvider.validateToken(accessToken)) {
-                String userEmailFromToken = jwtTokenProvider.getUserEmailFromToken(accessToken);
-                UserDetails userDetails = userDetailsService.loadUserByUsername(userEmailFromToken);
+            String accessToken = CookieUtil.getCookie(request, "access_token").orElse(null);
 
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+            if (accessToken != null) {
+                if (jwtTokenProvider.validateToken(accessToken, false)) {
+                    Authentication authentication = jwtTokenProvider.getAuthentication(accessToken);
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
 
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+                    if (jwtTokenProvider.isTokenExpiringSoon(accessToken)) {
+                        String newAccessToken = jwtTokenProvider.createAccessToken(authentication);
+                        CookieUtil.addCookie(response, "access_token", newAccessToken, accessTokenValidity);
+                    }
+                }
             }
+        } catch (InvalidTokenException e) {
+            handleExpiredToken(request, response);
         } catch (Exception e) {
-            System.out.println("Cannot set user authentication: " + e.getMessage());
+            log.error("JWT Authentication failed: {}", e.getMessage());
         }
 
         filterChain.doFilter(request, response);
     }
 
-    private String parseJwt(HttpServletRequest request) {
-        String headerAuth = request.getHeader("Authorization");
 
-        if (headerAuth != null && headerAuth.startsWith("Bearer ")) {
-            return headerAuth.substring(7); // "Bearer " 부분 제거 후 토큰 반환
+    private void handleExpiredToken(HttpServletRequest request, HttpServletResponse response) {
+        try {
+            String refreshToken = CookieUtil.getCookie(request, "refresh_token").orElseThrow(() -> new InvalidTokenException("Refresh token not found"));
+
+            if (StringUtils.hasText(refreshToken) &&
+                    jwtTokenProvider.validateToken(refreshToken, true)) {
+                Authentication authentication = jwtTokenProvider.getAuthentication(refreshToken);
+                String newAccessToken = jwtTokenProvider.createAccessToken(authentication);
+
+                CookieUtil.addCookie(response, "access_token", newAccessToken,
+                        accessTokenValidity);
+                CookieUtil.addCookie(response, "refresh_token", newAccessToken,
+                        accessTokenValidity);
+
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            }
+        } catch (Exception e) {
+            log.error("Token refresh failed: {}", e.getMessage());
         }
-
-        return null;
     }
+
 }
